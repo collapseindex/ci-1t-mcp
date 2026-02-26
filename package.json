@@ -1,0 +1,35 @@
+{
+  "name": "@collapseindex/ci1t-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for CI-1T — prediction stability engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ci1t-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Collapse Index Labs",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ci1t",
+    "collapse-index",
+    "ml-stability",
+    "prediction-stability"
+  ]
+}
