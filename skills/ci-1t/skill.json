@@ -1,0 +1,9 @@
+{
+  "name": "ci-1t",
+  "displayName": "CI-1T Stability Engine",
+  "description": "Real-time ML model stability monitoring, ghost detection, and fleet evaluation via the CI-1T API",
+  "version": "0.1.0",
+  "author": "Collapse Index",
+  "prompts": ["prompts/system.md"],
+  "tools": ["tools/ci1t_tools.json"]
+}

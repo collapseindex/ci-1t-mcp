@@ -2,3 +2,11 @@ node_modules/
 dist/
 *.tgz
 .env
+
+# Python artifacts (legacy)
+ci1t_mcp/
+ci1t_mcp.egg-info/
+__pycache__/
+*.pyc
+*.egg-info/
+pyproject.toml

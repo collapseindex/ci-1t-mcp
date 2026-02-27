@@ -1,0 +1,62 @@
+[
+  {
+    "name": "evaluate_scores",
+    "description": "Evaluate prediction scores through the CI-1T stability engine. Pass Q0.16 fixed-point scores (0–65535). Returns collapse index, authority level, warn/fault flags, and timing.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "scores": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 65535 },
+          "description": "Array of Q0.16 fixed-point prediction scores. At least 3 for one episode.",
+          "minItems": 3,
+          "maxItems": 300
+        }
+      },
+      "required": ["scores"]
+    }
+  },
+  {
+    "name": "fleet_evaluate",
+    "description": "Evaluate multiple model nodes in a fleet round. Returns per-node CI, AL, ghost detection flags, and fleet aggregates.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0, "maximum": 65535 },
+            "minItems": 3
+          },
+          "description": "Array of node score arrays. Each node needs >= 3 Q0.16 scores.",
+          "minItems": 1,
+          "maxItems": 50
+        }
+      },
+      "required": ["nodes"]
+    }
+  },
+  {
+    "name": "interpret_ci1t",
+    "description": "Interpret CI-1T results in plain language. No API call — local interpretation of CI, AL, ghost status.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "object",
+          "description": "Raw JSON response from evaluate_scores or fleet_evaluate."
+        }
+      },
+      "required": ["results"]
+    }
+  },
+  {
+    "name": "ci1t_health",
+    "description": "Check CI-1T API health status.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]
