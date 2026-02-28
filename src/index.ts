@@ -12,7 +12,7 @@
  *
  * Transport: stdio (for Claude Desktop, Cursor, Windsurf, etc.)
  *
- * © 2026 Collapse Index Labs — Apache 2.0
+ * © 2026 Alex Kwon — Proprietary. All rights reserved.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

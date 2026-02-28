@@ -2,7 +2,7 @@
 
 **Version:** 1.6.1  
 **Last Updated:** February 27, 2026  
-**License:** Apache 2.0
+**License:** Proprietary
 
 MCP (Model Context Protocol) server for the CI-1T prediction stability engine. Lets AI agents — Claude Desktop, Cursor, Windsurf, VS Code Copilot, and any MCP-compatible client — evaluate model stability, manage fleet sessions, and control API keys directly.
 
@@ -241,4 +241,5 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 
 ---
 
-© 2026 Collapse Index Labs™
+© 2026 Collapse Index Labs™ — Alex Kwon  
+[collapseindex.org](https://collapseindex.org) · [ask@collapseindex.org](mailto:ask@collapseindex.org)
