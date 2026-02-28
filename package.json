@@ -1,6 +1,6 @@
 {
   "name": "@collapseindex/ci1t-mcp",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "MCP server for CI-1T — prediction stability engine. Evaluate model stability, detect ghosts, monitor fleet drift. 20 tools for AI agents.",
   "type": "module",
   "main": "dist/index.js",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * CI-1T MCP Server v1.6.1
+ * CI-1T MCP Server v1.7.0
  *
  * Model Context Protocol server for CI-1T — the prediction stability engine.
  * Exposes 20 tools + 1 resource across evaluation, fleet sessions, API key management, billing, monitoring, visualization, and utilities.
@@ -85,7 +85,7 @@ function formatResult(result: ApiResult): { content: Array<{ type: "text"; text:
 
 const server = new McpServer({
   name: "ci1t",
-  version: "1.6.1",
+  version: "1.7.0",
 });
 
 // ─── Resources ────────────────────────────────────────────
@@ -173,6 +173,21 @@ Best for: Testing an LLM's consistency end-to-end
 3. visualize({ episodes })                  → HTML chart
 \`\`\`
 
+### Pattern 4b: BYOM Probe (Bring Your Own Model)
+Best for: Testing any OpenAI-compatible model (local or remote) without CI-1T credits
+\`\`\`
+// Probe a local Ollama model
+probe({ prompt: "What is 2+2?", base_url: "http://localhost:11434/v1", model: "llama3" })
+→ { scores, normalized, responses, mode: "byom" }
+
+// Probe OpenAI directly
+probe({ prompt: "What is 2+2?", base_url: "https://api.openai.com/v1", model_api_key: "sk-...", model: "gpt-4o" })
+→ { scores, normalized, responses, mode: "byom" }
+
+// Then evaluate for full classification
+evaluate({ scores: probe_result.scores }) → episodes
+\`\`\`
+
 ### Pattern 5: Fleet Session Workflow
 Best for: Persistent multi-round fleet monitoring
 \`\`\`
@@ -191,7 +206,7 @@ Best for: Persistent multi-round fleet monitoring
 ### Evaluation (requires API key, costs credits)
 - **evaluate** — Single-stream stability evaluation (1 credit/episode)
 - **fleet_evaluate** — Multi-node evaluation in one call (1 credit/episode/node)
-- **probe** — LLM consistency test (sends prompt 3x, compares responses)
+- **probe** — LLM consistency test (sends prompt 3x, compares responses). Supports BYOM mode: provide base_url + model to probe any OpenAI-compatible endpoint directly (no credits needed)
 - **health** — Engine health check
 
 ### Fleet Sessions (requires API key, costs credits per round)
@@ -291,6 +306,62 @@ function toQ16(scores: number[]): number[] {
 /** Escape HTML entities to prevent XSS in generated HTML */
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ─── Similarity scoring (for local BYOM probe) ───────────
+
+/** Jaccard similarity: shared word overlap between two strings, returns 0–1 */
+function jaccardSimilarity(a: string, b: string): number {
+  const setA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const setB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (setA.size === 0 && setB.size === 0) return 1;
+  const intersection = new Set([...setA].filter((x) => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
+/** Length similarity: ratio of shorter to longer response length, returns 0–1 */
+function lengthSimilarity(a: string, b: string): number {
+  const la = a.length, lb = b.length;
+  if (la === 0 && lb === 0) return 1;
+  return Math.min(la, lb) / Math.max(la, lb);
+}
+
+/** Fingerprint similarity: character frequency cosine similarity, returns 0–1 */
+function fingerprintSimilarity(a: string, b: string): number {
+  const freq = (s: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const c of s.toLowerCase()) m.set(c, (m.get(c) || 0) + 1);
+    return m;
+  };
+  const fa = freq(a), fb = freq(b);
+  const allKeys = new Set([...fa.keys(), ...fb.keys()]);
+  let dot = 0, magA = 0, magB = 0;
+  for (const k of allKeys) {
+    const va = fa.get(k) || 0, vb = fb.get(k) || 0;
+    dot += va * vb;
+    magA += va * va;
+    magB += vb * vb;
+  }
+  if (magA === 0 || magB === 0) return magA === 0 && magB === 0 ? 1 : 0;
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+/** Compute pairwise similarity for 3 responses, returns 3 scores as Q0.16 + normalized */
+function computeProbeScores(
+  responses: string[],
+  method: "jaccard" | "length" | "fingerprint" = "jaccard"
+): { scores: number[]; normalized: number[] } {
+  const simFn =
+    method === "length" ? lengthSimilarity : method === "fingerprint" ? fingerprintSimilarity : jaccardSimilarity;
+  // Pairwise: (0,1), (0,2), (1,2) — instability = 1 - similarity
+  const pairs: [number, number][] = [[0, 1], [0, 2], [1, 2]];
+  const normalized = pairs.map(([i, j]) => {
+    const sim = simFn(responses[i], responses[j]);
+    return Math.round((1 - sim) * 1e6) / 1e6; // instability score, 6 decimal precision
+  });
+  const scores = normalized.map((n) => Math.round(n * Q16));
+  return { scores, normalized };
 }
 
 // ━━━━━━━━━ ONBOARDING ━━━━━━━━━
@@ -434,12 +505,78 @@ server.tool(
 
 server.tool(
   "probe",
-  "Probe an LLM for prediction instability. Sends the same prompt 3 times and compares responses using the specified similarity method. Response: { scores: [u16, u16, u16], normalized: [f64, f64, f64], responses: [str, str, str], method }. The returned scores array can be passed directly to evaluate for full stability classification. No-code way to test any LLM's consistency.",
+  "Probe an LLM for prediction instability. Sends the same prompt 3 times and compares responses using the specified similarity method. Two modes: (1) Default — routes through CI-1T backend (costs 1 credit, uses Grok). (2) BYOM (Bring Your Own Model) — provide base_url + model_api_key + model to probe any OpenAI-compatible API directly (no credits, no CI-1T auth needed). Response: { scores: [u16, u16, u16], normalized: [f64, f64, f64], responses: [str, str, str], method, mode }. The returned scores array can be passed directly to evaluate for full stability classification.",
   {
     prompt: z.string().min(3).max(500).describe("The prompt to send 3 times to the LLM"),
     method: z.enum(["jaccard", "length", "fingerprint"]).optional().describe("Similarity method (default: jaccard)"),
+    base_url: z.string().url().optional().describe("OpenAI-compatible API base URL for BYOM mode (e.g. http://localhost:11434/v1, https://api.openai.com/v1). When set, probes this endpoint directly instead of CI-1T backend."),
+    model_api_key: z.string().optional().describe("API key for the target LLM provider (BYOM mode). Sent as Bearer token in Authorization header."),
+    model: z.string().optional().describe("Model name for BYOM mode (e.g. gpt-4o, claude-sonnet-4-20250514, llama3, mistral). Required when base_url is set."),
   },
-  async ({ prompt, method }) => {
+  async ({ prompt, method, base_url, model_api_key, model }) => {
+    const similarityMethod = method || "jaccard";
+
+    // ── BYOM mode: probe any OpenAI-compatible endpoint directly ──
+    if (base_url) {
+      if (!model) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "model is required when using base_url (BYOM mode). Example: gpt-4o, llama3, mistral" }) }],
+        };
+      }
+
+      const chatUrl = `${base_url.replace(/\/+$/, "")}/chat/completions`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (model_api_key) headers["Authorization"] = `Bearer ${model_api_key}`;
+
+      const responses: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        try {
+          const res = await fetch(chatUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              model,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.7,
+              max_tokens: 300,
+            }),
+          });
+          if (!res.ok) {
+            const errText = await res.text();
+            return {
+              content: [{ type: "text" as const, text: JSON.stringify({ error: `LLM request ${i + 1}/3 failed (${res.status}): ${errText.substring(0, 300)}` }) }],
+            };
+          }
+          const data = await res.json() as { choices?: { message?: { content?: string } }[] };
+          const content = data?.choices?.[0]?.message?.content || "";
+          responses.push(content);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: `LLM request ${i + 1}/3 network error: ${message}` }) }],
+          };
+        }
+      }
+
+      const { scores, normalized } = computeProbeScores(responses, similarityMethod);
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            scores,
+            normalized,
+            responses,
+            method: similarityMethod,
+            model,
+            mode: "byom",
+            note: "Pass the scores array to evaluate for full CI-1T stability classification.",
+          }, null, 2),
+        }],
+      };
+    }
+
+    // ── Default mode: route through CI-1T backend ──
     const guard = requireApiKey();
     if (guard) return guard;
     const body: Record<string, unknown> = { action: "probe", prompt };

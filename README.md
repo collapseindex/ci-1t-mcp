@@ -1,6 +1,6 @@
 # CI-1T MCP Server
 
-**Version:** 1.6.1  
+**Version:** 1.7.0  
 **Last Updated:** February 27, 2026  
 **License:** Proprietary
 
@@ -14,7 +14,7 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 |------|-------------|------|
 | `evaluate` | Evaluate prediction stability (floats or Q0.16) | API key |
 | `fleet_evaluate` | Fleet-wide multi-node evaluation (floats or Q0.16) | API key |
-| `probe` | Probe an LLM for instability (3x same prompt) | API key |
+| `probe` | Probe any LLM for instability (3x same prompt). BYOM mode: bring your own model via OpenAI-compatible API | API key or BYOM |
 | `health` | Check CI-1T engine status | API key |
 | `fleet_session_create` | Create a persistent fleet session | API key |
 | `fleet_session_round` | Submit a scoring round | API key |
@@ -144,6 +144,10 @@ The agent calls `evaluate` with `scores: [45000, 32000, 51000, 48000, 29000, 550
 
 > "Probe this prompt for stability: What is the capital of France?"
 
+> "Probe my local Ollama llama3 model with: What is the meaning of life?"
+
+The agent calls `probe` in BYOM mode — sends the prompt 3x to `http://localhost:11434/v1` and scores the responses locally. No CI-1T credits used.
+
 > "Interpret these scores: 0.12, 0.45, 0.88, 0.03, 0.67"
 
 The agent calls `interpret_scores` locally (no API call, no credits) and returns mean, std, min/max, and normalized values. For full stability classification, use `evaluate`.
@@ -183,6 +187,15 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 ```
 
 ## Changelog
+
+### v1.7.0 (2026-02-27)
+- **BYOM Probe**: `probe` tool now supports Bring Your Own Model mode
+- Provide `base_url` + `model` (+ optional `model_api_key`) to probe any OpenAI-compatible endpoint directly
+- Works with local models (Ollama, LM Studio, vLLM) and remote APIs (OpenAI, Anthropic, Together, etc.)
+- BYOM mode runs entirely locally — no CI-1T auth needed, no credits consumed
+- Default mode unchanged (routes through CI-1T backend, costs 1 credit)
+- Local similarity scoring: Jaccard, length ratio, and character fingerprint cosine similarity
+- 20 tools + 1 resource
 
 ### v1.6.1 (2026-02-27)
 - **SEC-01** (Critical): API key generation now uses `crypto.randomBytes()` instead of `Math.random()`
