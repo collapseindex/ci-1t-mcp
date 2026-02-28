@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.collapseindex/ci1t-mcp",
+  "description": "CI-1T prediction stability engine. Detect ghosts, evaluate drift, monitor fleets. 20 tools.",
+  "repository": {
+    "url": "https://github.com/collapseindex/ci-1t-mcp",
+    "source": "github"
+  },
+  "version": "1.7.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@collapseindex/ci1t-mcp",
+      "version": "1.7.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "CI-1T API key for backend-routed analysis (optional for BYOM mode)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "CI1T_API_KEY"
+        },
+        {
+          "description": "CI-1T API base URL (defaults to https://ci1t-api.onrender.com)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "CI1T_BASE_URL"
+        }
+      ]
+    }
+  ]
+}
