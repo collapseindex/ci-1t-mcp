@@ -1,6 +1,6 @@
 # CI-1T MCP Server
 
-**Version:** 1.5.0  
+**Version:** 1.6.0  
 **Last Updated:** February 27, 2026  
 **License:** Apache 2.0
 
@@ -8,7 +8,7 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 
 **One credential. One env var. That's it.**
 
-## Tools (20)
+## Tools (20) + Resources (1)
 
 | Tool | Description | Auth |
 |------|-------------|------|
@@ -32,6 +32,10 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 | `compare_windows` | Compare baseline vs recent episodes for drift detection | None |
 | `alert_check` | Check episodes against custom thresholds, return alerts | None |
 | `visualize` | Interactive HTML visualization of evaluate results | None |
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| `tools_guide` | `ci1t://tools-guide` | Full usage guide: response schemas, chaining patterns, fleet workflow, thresholds, example pipelines |
 
 ## Onboarding
 
@@ -179,6 +183,12 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 ```
 
 ## Changelog
+
+### v1.6.0 (2026-02-27)
+- **AI Discoverability**: All 20 tool descriptions now include response schemas and chaining hints
+- `tools_guide` MCP resource (`ci1t://tools-guide`): comprehensive usage guide with response schemas, chaining patterns, fleet session workflow, classification thresholds, and example pipelines
+- Agents can now read the resource for full context beyond individual tool descriptions
+- 20 tools + 1 resource
 
 ### v1.5.0 (2026-02-27)
 - `compare_windows` tool: compare baseline vs recent episodes — drift delta, trend direction, degradation detection

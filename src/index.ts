@@ -84,8 +84,142 @@ function formatResult(result: ApiResult): { content: Array<{ type: "text"; text:
 
 const server = new McpServer({
   name: "ci1t",
-  version: "1.5.0",
+  version: "1.6.0",
 });
+
+// ─── Resources ────────────────────────────────────────────
+
+server.resource(
+  "tools_guide",
+  "ci1t://tools-guide",
+  {
+    description:
+      "Comprehensive usage guide for all CI-1T tools — response schemas, chaining patterns, fleet session workflow, classification thresholds, and example pipelines. Read this resource when you need full context beyond tool descriptions.",
+  },
+  async (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        text: `# CI-1T MCP Tools Guide
+
+## Overview
+CI-1T is a prediction stability engine. It computes the Collapse Index (CI) — a Q0.16 fixed-point metric where 0 = perfectly stable and 65535 = total collapse.
+All CI/EMA values in responses are Q0.16 integers (0–65535). Divide by 65535 for a 0–1 float or multiply by 100/65535 for a percentage.
+
+## Classification Thresholds
+| CI Range (normalized) | Label    | Meaning                          |
+|-----------------------|----------|----------------------------------|
+| 0.00 – 0.15          | Stable   | Predictions are consistent       |
+| 0.16 – 0.45          | Drift    | Minor inconsistency detected     |
+| 0.46 – 0.70          | Flip     | Significant instability          |
+| 0.71 – 1.00          | Collapse | Model predictions are unreliable |
+
+## Authority Levels (al_out)
+| AL | Label          | Meaning                            |
+|----|----------------|------------------------------------|
+| 0  | Full Authority | Predictions can be trusted         |
+| 1  | High Authority | Minor degradation                  |
+| 2  | Moderate       | Noticeable instability             |
+| 3  | Minimal        | Predictions questionable           |
+| 4  | No Authority   | Do not trust predictions           |
+
+## Episode Object Schema
+Every evaluate, fleet_evaluate, and fleet_session_round response includes episodes:
+\`\`\`json
+{
+  "ci_out": 1234,           // Q0.16 CI score (0–65535)
+  "ci_ema_out": 1100,       // Q0.16 exponential moving average
+  "al_out": 0,              // Authority level (0–4)
+  "warn": false,            // Warning flag
+  "fault": false,           // Fault flag
+  "fault_code": 0,          // Fault code (0 = none)
+  "ghost_confirmed": false, // Ghost prediction detected
+  "ghost_suspect_streak": 0 // Consecutive ghost suspects
+}
+\`\`\`
+
+## Chaining Patterns
+
+### Pattern 1: Evaluate → Visualize
+Best for: Quick visual inspection of model stability
+\`\`\`
+1. evaluate({ scores: [...] })           → get episodes array
+2. visualize({ episodes: result.episodes }) → get HTML file path
+\`\`\`
+
+### Pattern 2: Evaluate → Alert Check
+Best for: Automated threshold monitoring
+\`\`\`
+1. evaluate({ scores: [...] })
+2. alert_check({ episodes: result.episodes, ci_threshold: 0.30 })
+   → { status: "ok"|"warn"|"critical", alerts: [...] }
+\`\`\`
+
+### Pattern 3: Evaluate → Compare Windows (Drift Detection)
+Best for: Comparing model health over time
+\`\`\`
+1. evaluate({ scores: baseline_scores })  → baseline_episodes
+2. evaluate({ scores: recent_scores })    → recent_episodes
+3. compare_windows({ baseline: baseline_episodes, recent: recent_episodes })
+   → { trend: "improving"|"stable"|"degrading", delta: {...} }
+\`\`\`
+
+### Pattern 4: Probe → Evaluate → Visualize
+Best for: Testing an LLM's consistency end-to-end
+\`\`\`
+1. probe({ prompt: "What is 2+2?" })      → { scores: [u16, u16, u16] }
+2. evaluate({ scores: probe_result.scores }) → episodes
+3. visualize({ episodes })                  → HTML chart
+\`\`\`
+
+### Pattern 5: Fleet Session Workflow
+Best for: Persistent multi-round fleet monitoring
+\`\`\`
+1. fleet_session_create({ node_count: 3, node_names: ["gpt4", "claude", "llama"] })
+   → { session_id: "abc123" }
+2. fleet_session_round({ session_id: "abc123", scores: [[...], [...], [...]] })
+   → per-node episodes + fleet_summary  (repeat for each scoring round)
+3. fleet_session_state({ session_id: "abc123" })
+   → accumulated state without submitting new scores
+4. fleet_session_delete({ session_id: "abc123" })
+   → cleanup when done
+\`\`\`
+
+## Tool Categories
+
+### Evaluation (requires API key, costs credits)
+- **evaluate** — Single-stream stability evaluation (1 credit/episode)
+- **fleet_evaluate** — Multi-node evaluation in one call (1 credit/episode/node)
+- **probe** — LLM consistency test (sends prompt 3x, compares responses)
+- **health** — Engine health check
+
+### Fleet Sessions (requires API key, costs credits per round)
+- **fleet_session_create** → **fleet_session_round** (repeat) → **fleet_session_state** → **fleet_session_delete**
+
+### Analysis (local, free, no auth)
+- **compare_windows** — Drift detection between two episode windows
+- **alert_check** — Threshold-based alerting on episodes
+- **visualize** — Interactive HTML chart generation
+- **interpret_scores** — Statistical breakdown of raw scores
+- **convert_scores** — Float ↔ Q0.16 conversion
+
+### Configuration (local, free, no auth)
+- **generate_config** — Integration boilerplate for any framework
+- **onboarding** — Setup guide and getting started
+
+### Account Management (requires API key)
+- **list_api_keys**, **create_api_key**, **delete_api_key** — API key CRUD
+- **get_invoices** — Billing history
+
+## Credits
+- 1,000 free credits on signup at https://collapseindex.org/signup
+- 1 credit per episode (evaluate), 1 credit per episode per node (fleet_evaluate)
+- Local tools (interpret_scores, convert_scores, compare_windows, alert_check, visualize, generate_config) are always free
+`,
+      },
+    ],
+  })
+);
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -248,7 +382,7 @@ server.tool(
 
 server.tool(
   "evaluate",
-  "Evaluate prediction stability. Sends scores to the CI-1T engine and returns stability metrics for each episode. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts.",
+  "Evaluate prediction stability. Sends scores to the CI-1T engine and returns per-episode stability metrics. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts. Response: { episodes: [{ ci_out, ci_ema_out, al_out, warn, fault, ghost_confirmed, ghost_suspect_streak, ... }], credits_used, credits_remaining }. CI values are Q0.16 (0–65535; divide by 65535 for %). Classification: ≤0.15=Stable, ≤0.45=Drift, ≤0.70=Flip, >0.70=Collapse. Chain results → visualize (chart), alert_check (threshold alerts), compare_windows (drift detection), or interpret_scores (stats).",
   {
     scores: z.array(z.number().min(0).max(65535)).min(1).describe("Array of prediction scores — floats (0.0–1.0) or Q0.16 integers (0–65535), auto-detected"),
     n: z.number().int().min(2).max(8).optional().describe("Episode length (default: 3)"),
@@ -270,7 +404,7 @@ server.tool(
 
 server.tool(
   "fleet_evaluate",
-  "Evaluate a fleet of model nodes for prediction stability. Each node provides a score stream. Returns per-node stability metrics and aggregate statistics. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts per node.",
+  "Evaluate a fleet of model nodes for prediction stability. Each node provides a score stream. Returns per-node episodes and aggregate fleet stats. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts per node. Response: { nodes: [{ node_id, episodes: [{ ci_out, ci_ema_out, al_out, warn, fault, ghost_confirmed, ... }] }], fleet_summary, credits_used, credits_remaining }. Chain per-node episodes → visualize, alert_check, or compare_windows. For persistent multi-round fleet monitoring, use fleet_session_create instead.",
   {
     nodes: z.array(z.array(z.number().min(0).max(65535)).min(1)).min(1).describe("Array of node score arrays — each inner array is one node's scores (floats or Q0.16)"),
     n: z.number().int().min(2).max(8).optional().describe("Episode length (default: 3)"),
@@ -292,7 +426,7 @@ server.tool(
 
 server.tool(
   "probe",
-  "Probe an LLM for prediction instability. Sends the same prompt 3 times and compares responses using the specified similarity method. Returns Q0.16 scores, normalized scores (0–1), and truncated responses.",
+  "Probe an LLM for prediction instability. Sends the same prompt 3 times and compares responses using the specified similarity method. Response: { scores: [u16, u16, u16], normalized: [f64, f64, f64], responses: [str, str, str], method }. The returned scores array can be passed directly to evaluate for full stability classification. No-code way to test any LLM's consistency.",
   {
     prompt: z.string().min(3).max(500).describe("The prompt to send 3 times to the LLM"),
     method: z.enum(["jaccard", "length", "fingerprint"]).optional().describe("Similarity method (default: jaccard)"),
@@ -313,7 +447,7 @@ server.tool(
 
 server.tool(
   "health",
-  "Check CI-1T engine health. Returns engine version, status, and latency.",
+  "Check CI-1T engine health. Response: { status, version, latency_ms }. Call before evaluate/fleet operations to verify the engine is reachable.",
   {},
   async () => {
     const guard = requireApiKey();
@@ -331,7 +465,7 @@ server.tool(
 
 server.tool(
   "fleet_session_create",
-  "Create a new persistent fleet monitoring session. Returns a session ID for subsequent rounds. Max 16 nodes.",
+  "Create a new persistent fleet monitoring session. Returns a session ID for subsequent rounds. Max 16 nodes. Response: { session_id, node_count, node_names, created_at }. Workflow: fleet_session_create → fleet_session_round (repeat) → fleet_session_state (check) → fleet_session_delete (cleanup).",
   {
     node_count: z.number().int().min(1).max(16).describe("Number of nodes in the fleet"),
     node_names: z.array(z.string()).optional().describe("Optional names for each node (must match node_count)"),
@@ -352,7 +486,7 @@ server.tool(
 
 server.tool(
   "fleet_session_round",
-  "Submit a scoring round to an existing fleet session. Each node's scores array is evaluated, and the cumulative fleet snapshot is returned.",
+  "Submit a scoring round to an existing fleet session. Each node's scores array is evaluated and the cumulative fleet snapshot is returned. Response: { round, nodes: [{ episodes: [...] }], fleet_summary }. Episodes in the response can be passed to visualize, alert_check, or compare_windows.",
   {
     session_id: z.string().describe("Fleet session ID"),
     scores: z.array(z.array(z.number().int().min(0).max(65535)).min(1)).min(1).describe("Per-node score arrays for this round"),
@@ -371,7 +505,7 @@ server.tool(
 
 server.tool(
   "fleet_session_state",
-  "Get the current state of a fleet session without submitting new scores.",
+  "Get the current state of a fleet session without submitting new scores. Response: { session_id, round_count, nodes: [{ node_id, node_name, episodes: [...] }], fleet_summary }. Use to inspect accumulated results between rounds.",
   {
     session_id: z.string().describe("Fleet session ID"),
   },
@@ -389,7 +523,7 @@ server.tool(
 
 server.tool(
   "fleet_session_list",
-  "List all active fleet sessions.",
+  "List all active fleet sessions. Response: { sessions: [{ session_id, node_count, round_count, created_at }] }.",
   {},
   async () => {
     const guard = requireApiKey();
@@ -405,7 +539,7 @@ server.tool(
 
 server.tool(
   "fleet_session_delete",
-  "Delete a fleet session by ID.",
+  "Delete a fleet session by ID. Response: { deleted: true, session_id }. Call when monitoring is complete to free server resources.",
   {
     session_id: z.string().describe("Fleet session ID to delete"),
   },
@@ -425,7 +559,7 @@ server.tool(
 
 server.tool(
   "list_api_keys",
-  "List all API keys for the authenticated user.",
+  "List all API keys for the authenticated user. Response: { keys: [{ id, name, masked_key, scope, enabled, created }] }. Use the record id with delete_api_key to revoke.",
   {
     user_id: z.string().describe("Your user ID (shown on your dashboard)"),
   },
@@ -442,7 +576,7 @@ server.tool(
 
 server.tool(
   "create_api_key",
-  "Create a new CI-1T API key. Returns the key value and record. Save the key — it cannot be retrieved again.",
+  "Create a new CI-1T API key. Response: { api_key, masked_key, scope, record }. IMPORTANT: Save the returned api_key — it cannot be retrieved again after creation.",
   {
     user_id: z.string().describe("Your user ID (shown on your dashboard)"),
     name: z.string().min(1).max(100).describe("Human-readable name for the key"),
@@ -505,7 +639,7 @@ server.tool(
 
 server.tool(
   "delete_api_key",
-  "Delete an API key by record ID.",
+  "Delete an API key by its PocketBase record ID (from list_api_keys). Response: { deleted: true }.",
   {
     id: z.string().describe("PocketBase record ID of the API key to delete"),
   },
@@ -524,7 +658,7 @@ server.tool(
 
 server.tool(
   "get_invoices",
-  "Get billing history (Stripe invoices). Returns recent payments with credit amounts.",
+  "Get billing history (Stripe invoices). Response: { invoices: [{ amount, credits, date, status }], has_more, cursor }. Pass cursor to paginate.",
   {
     cursor: z.string().optional().describe("Pagination cursor (payment intent ID) for next page"),
   },
@@ -544,7 +678,7 @@ server.tool(
 
 server.tool(
   "interpret_scores",
-  "Analyze raw prediction scores with statistical breakdown. Computes mean, standard deviation, min/max, and normalized values. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-detects. No API call, no auth, no credits. For full stability classification, use the evaluate tool.",
+  "Analyze raw prediction scores with statistical breakdown — no API call, no auth, no credits. Response: { count, mean, std, min, max, breakdown: [{ index, raw, normalized }] }. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-detects. For full stability classification (Stable/Drift/Flip/Collapse), pass scores to the evaluate tool instead.",
   {
     scores: z.array(z.number().min(0).max(65535)).min(1).max(300).describe("Array of scores — floats (0.0–1.0) or Q0.16 integers (0–65535)"),
   },
@@ -587,7 +721,7 @@ server.tool(
 
 server.tool(
   "convert_scores",
-  "Convert between probability floats (0.0–1.0) and Q0.16 fixed-point integers (0–65535). No API call, no auth, no credits. Use when users have model confidence or probability outputs that need converting before evaluation, or want to interpret raw Q0.16 values.",
+  "Convert between probability floats (0.0–1.0) and Q0.16 fixed-point integers (0–65535) — no API call, no auth, no credits. Response: { direction, count, converted: [{ input, q16|float }] }. Use to_q16 before evaluate, from_q16 to make CI outputs human-readable.",
   {
     scores: z.array(z.number()).min(1).max(300).describe("Array of scores to convert"),
     direction: z.enum(["to_q16", "from_q16"]).describe('"to_q16" converts 0.0–1.0 floats to Q0.16 integers. "from_q16" converts Q0.16 integers to floats.'),
@@ -628,7 +762,7 @@ server.tool(
 
 server.tool(
   "generate_config",
-  "Generate CI-1T integration boilerplate for a specific framework or language. Returns structured config with API endpoints, auth pattern, score format, and a generation instruction so you can produce complete, production-ready integration code. No API call, no auth, no credits.",
+  "Generate CI-1T integration boilerplate for a specific framework or language — no API call, no auth, no credits. Response: { framework, use_case, api_base, endpoints, score_format, auth, cost, instruction }. The instruction field tells you how to produce complete, production-ready integration code for the user's stack.",
   {
     framework: z.string().min(1).max(50).describe('Target framework or language (e.g. "fastapi", "express", "django", "flask", "nextjs", "python", "typescript", "go", "rust")'),
     use_case: z.enum(["single", "fleet", "guardrail"]).optional().describe('Integration pattern: "single" for single-model monitoring, "fleet" for multi-model fleet evaluation, "guardrail" for CI-as-guardrail (reject/fallback when unstable)'),
@@ -667,7 +801,7 @@ server.tool(
 
 server.tool(
   "compare_windows",
-  "Compare two windows of episodes to detect drift or degradation. Takes a baseline and a recent episode array (from evaluate or fleet responses), returns drift delta, trend direction, and whether stability degraded. Local computation — no API call, no auth, no credits.",
+  "Compare two windows of episodes to detect drift or degradation — no API call, no auth, no credits. Takes baseline and recent episode arrays from evaluate or fleet_session_round responses. Response: { comparison: { baseline: stats, recent: stats }, delta: { ci_mean, ema_mean, al_mean, ghost_delta, warn_delta, fault_delta }, trend: 'improving'|'stable'|'degrading', degraded: bool, severity_factors: [...] }. Use after multiple evaluate calls to track model health over time.",
   {
     baseline: z.array(z.record(z.string(), z.unknown())).min(1).describe("Baseline episode array (e.g. last hour, known-good run)"),
     recent: z.array(z.record(z.string(), z.unknown())).min(1).describe("Recent episode array to compare against baseline"),
@@ -763,7 +897,7 @@ server.tool(
 
 server.tool(
   "alert_check",
-  "Check episodes against user-defined thresholds and return triggered alerts. Takes an episode array and optional threshold overrides. Local computation — no API call, no auth, no credits.",
+  "Check episodes against configurable thresholds and return triggered alerts — no API call, no auth, no credits. Takes an episode array from evaluate or fleet responses. Response: { status: 'ok'|'warn'|'critical', total_alerts, critical, warnings, episodes_checked, thresholds, alerts: [{ episode, type, value, threshold, severity }] }. Alert types: ci_exceeded, ema_exceeded, authority_elevated, ghost_detected, fault.",
   {
     episodes: z.array(z.record(z.string(), z.unknown())).min(1).describe("Episode array from an evaluate or fleet response"),
     ci_threshold: z.number().min(0).max(1).optional().describe("Alert if any episode CI exceeds this (default: 0.45 = Drift boundary)"),
@@ -1283,7 +1417,7 @@ render();
 
 server.tool(
   "visualize",
-  "Generate an interactive HTML visualization of CI-1T evaluate results. Returns a file path to a self-contained HTML chart with color-coded CI bars, EMA trend, authority levels, hover tooltips, and summary stats — same style as the CI-1T dashboard Lab. Open the returned file in a browser to view.",
+  "Generate an interactive HTML visualization of CI-1T evaluate results — no API call, no auth, no credits. Takes an episode array from evaluate or fleet responses. Returns a file path to a self-contained HTML chart with sidebar KPIs, color-coded CI bars, EMA trend, authority levels, and hover tooltips. Response: { visualization: filepath, episodes, title, instruction }. Open the file in a browser or VS Code Simple Browser.",
   {
     episodes: z.array(z.record(z.string(), z.unknown())).min(1).describe("Episode array from an evaluate or fleet_evaluate response"),
     title: z.string().optional().describe("Chart title (default: CI-1T Stability Analysis)"),
@@ -1326,7 +1460,7 @@ async function main() {
   console.error("[ci1t-mcp] Server started — stdio transport");
   console.error(`[ci1t-mcp] Base URL: ${BASE_URL}`);
   console.error(`[ci1t-mcp] API key: ${API_KEY ? "configured" : "NOT SET"}`);
-  console.error(`[ci1t-mcp] 20 tools registered`);
+  console.error(`[ci1t-mcp] 20 tools + 1 resource registered`);
 
   if (!API_KEY) {
     console.error("");
