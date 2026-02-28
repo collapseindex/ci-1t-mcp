@@ -1,16 +1,22 @@
 {
   "name": "@collapseindex/ci1t-mcp",
   "version": "1.6.1",
-  "description": "MCP server for CI-1T — prediction stability engine",
+  "description": "MCP server for CI-1T — prediction stability engine. Evaluate model stability, detect ghosts, monitor fleet drift. 20 tools for AI agents.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "ci1t-mcp": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1"
@@ -22,14 +28,26 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "author": "Collapse Index Labs",
+  "author": "Alex Kwon <ask@collapseindex.org> (https://collapseindex.org)",
   "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://collapseindex.org",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/collapseindex/ci-1t-mcp.git"
+  },
+  "bugs": {
+    "email": "ask@collapseindex.org"
+  },
   "keywords": [
     "mcp",
     "model-context-protocol",
     "ci1t",
     "collapse-index",
     "ml-stability",
-    "prediction-stability"
+    "prediction-stability",
+    "ghost-detection",
+    "model-monitoring",
+    "ai-safety",
+    "llm-evaluation"
   ]
 }
