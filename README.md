@@ -1,5 +1,9 @@
 # CI-1T MCP Server
 
+<a href="https://glama.ai/mcp/servers/@collapseindex/ci1t-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@collapseindex/ci1t-mcp/badge" />
+</a>
+
 **Version:** 1.7.0  
 **Last Updated:** February 27, 2026  
 **License:** Proprietary
