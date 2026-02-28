@@ -1,6 +1,6 @@
 # CI-1T MCP Server
 
-**Version:** 1.4.0  
+**Version:** 1.5.0  
 **Last Updated:** February 27, 2026  
 **License:** Apache 2.0
 
@@ -8,7 +8,7 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 
 **One credential. One env var. That's it.**
 
-## Tools (18)
+## Tools (20)
 
 | Tool | Description | Auth |
 |------|-------------|------|
@@ -29,6 +29,8 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 | `interpret_scores` | Statistical breakdown of scores | None |
 | `convert_scores` | Convert between floats and Q0.16 | None |
 | `generate_config` | Integration boilerplate for any framework | None |
+| `compare_windows` | Compare baseline vs recent episodes for drift detection | None |
+| `alert_check` | Check episodes against custom thresholds, return alerts | None |
 | `visualize` | Interactive HTML visualization of evaluate results | None |
 
 ## Onboarding
@@ -177,6 +179,12 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 ```
 
 ## Changelog
+
+### v1.5.0 (2026-02-27)
+- `compare_windows` tool: compare baseline vs recent episodes — drift delta, trend direction, degradation detection
+- `alert_check` tool: check episodes against custom thresholds (CI, EMA, AL, ghost, fault) with severity levels
+- Both tools are local computation — no API call, no auth, no credits
+- 20 tools total
 
 ### v1.4.0 (2026-02-27)
 - `visualize` tool: generates self-contained interactive HTML with Canvas 2D bar charts

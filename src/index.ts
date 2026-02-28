@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * CI-1T MCP Server v1.4.0
+ * CI-1T MCP Server v1.5.0
  *
  * Model Context Protocol server for CI-1T — the prediction stability engine.
- * Exposes 18 tools across evaluation, fleet sessions, API key management, billing, visualization, and utilities.
+ * Exposes 20 tools across evaluation, fleet sessions, API key management, billing, monitoring, visualization, and utilities.
  *
  * Auth:
  *   CI1T_API_KEY  — ci_... API key. Single credential for all authenticated tools.
@@ -84,7 +84,7 @@ function formatResult(result: ApiResult): { content: Array<{ type: "text"; text:
 
 const server = new McpServer({
   name: "ci1t",
-  version: "1.4.0",
+  version: "1.5.0",
 });
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -663,6 +663,226 @@ server.tool(
   }
 );
 
+// ━━━━━━━━━ MONITORING / ANALYSIS TOOLS ━━━━━━━━━
+
+server.tool(
+  "compare_windows",
+  "Compare two windows of episodes to detect drift or degradation. Takes a baseline and a recent episode array (from evaluate or fleet responses), returns drift delta, trend direction, and whether stability degraded. Local computation — no API call, no auth, no credits.",
+  {
+    baseline: z.array(z.record(z.string(), z.unknown())).min(1).describe("Baseline episode array (e.g. last hour, known-good run)"),
+    recent: z.array(z.record(z.string(), z.unknown())).min(1).describe("Recent episode array to compare against baseline"),
+  },
+  async ({ baseline, recent }) => {
+    const Q = 65535;
+
+    function windowStats(eps: Array<Record<string, unknown>>) {
+      const cis = eps.map(e => ((e.ci_out as number) || 0) / Q);
+      const emas = eps.map(e => ((e.ci_ema_out as number) || 0) / Q);
+      const als = eps.map(e => (e.al_out as number) || 0);
+      const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+      const max = (arr: number[]) => Math.max(...arr);
+      const min = (arr: number[]) => Math.min(...arr);
+      const ghosts = eps.filter(e => e.ghost_confirmed).length;
+      const warns = eps.filter(e => e.warn).length;
+      const faults = eps.filter(e => e.fault).length;
+
+      return {
+        episodes: eps.length,
+        ci_mean: mean(cis),
+        ci_max: max(cis),
+        ci_min: min(cis),
+        ema_mean: mean(emas),
+        al_mean: mean(als),
+        al_max: max(als),
+        ghosts,
+        warns,
+        faults,
+      };
+    }
+
+    function classify(ci: number): string {
+      if (ci <= 0.15) return "Stable";
+      if (ci <= 0.45) return "Drift";
+      if (ci <= 0.70) return "Flip";
+      return "Collapse";
+    }
+
+    const base = windowStats(baseline as Array<Record<string, unknown>>);
+    const curr = windowStats(recent as Array<Record<string, unknown>>);
+
+    const ciDelta = curr.ci_mean - base.ci_mean;
+    const emaDelta = curr.ema_mean - base.ema_mean;
+    const alDelta = curr.al_mean - base.al_mean;
+
+    // Trend direction
+    let trend: "improving" | "stable" | "degrading";
+    if (ciDelta < -0.03) trend = "improving";
+    else if (ciDelta > 0.03) trend = "degrading";
+    else trend = "stable";
+
+    // Severity assessment
+    const severityFactors: string[] = [];
+    if (ciDelta > 0.15) severityFactors.push("CI jumped significantly (+${(ciDelta * 100).toFixed(1)}%)");
+    if (curr.ghosts > base.ghosts) severityFactors.push(`Ghost count increased (${base.ghosts} → ${curr.ghosts})`);
+    if (curr.faults > base.faults) severityFactors.push(`Fault count increased (${base.faults} → ${curr.faults})`);
+    if (curr.al_max > base.al_max) severityFactors.push(`Max authority level rose (AL${base.al_max} → AL${curr.al_max})`);
+    if (classify(curr.ci_mean) !== classify(base.ci_mean)) {
+      severityFactors.push(`Classification changed: ${classify(base.ci_mean)} → ${classify(curr.ci_mean)}`);
+    }
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              comparison: {
+                baseline: { ...base, ci_mean_pct: +(base.ci_mean * 100).toFixed(2), classification: classify(base.ci_mean) },
+                recent: { ...curr, ci_mean_pct: +(curr.ci_mean * 100).toFixed(2), classification: classify(curr.ci_mean) },
+              },
+              delta: {
+                ci_mean: +(ciDelta * 100).toFixed(2),
+                ema_mean: +(emaDelta * 100).toFixed(2),
+                al_mean: +alDelta.toFixed(2),
+                ghost_delta: curr.ghosts - base.ghosts,
+                warn_delta: curr.warns - base.warns,
+                fault_delta: curr.faults - base.faults,
+              },
+              trend,
+              degraded: trend === "degrading",
+              severity_factors: severityFactors.length ? severityFactors : ["No significant changes detected"],
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "alert_check",
+  "Check episodes against user-defined thresholds and return triggered alerts. Takes an episode array and optional threshold overrides. Local computation — no API call, no auth, no credits.",
+  {
+    episodes: z.array(z.record(z.string(), z.unknown())).min(1).describe("Episode array from an evaluate or fleet response"),
+    ci_threshold: z.number().min(0).max(1).optional().describe("Alert if any episode CI exceeds this (default: 0.45 = Drift boundary)"),
+    ema_threshold: z.number().min(0).max(1).optional().describe("Alert if any episode EMA exceeds this (default: 0.45)"),
+    al_threshold: z.number().int().min(0).max(4).optional().describe("Alert if any episode authority level >= this (default: 3 = Minimal)"),
+    ghost_alert: z.boolean().optional().describe("Alert on ghost detections (default: true)"),
+    fault_alert: z.boolean().optional().describe("Alert on faults (default: true)"),
+  },
+  async ({ episodes, ci_threshold, ema_threshold, al_threshold, ghost_alert, fault_alert }) => {
+    const Q = 65535;
+    const ciThresh = ci_threshold ?? 0.45;
+    const emaThresh = ema_threshold ?? 0.45;
+    const alThresh = al_threshold ?? 3;
+    const ghostOn = ghost_alert ?? true;
+    const faultOn = fault_alert ?? true;
+
+    interface Alert {
+      episode: number;
+      type: string;
+      value: string;
+      threshold: string;
+      severity: "warn" | "critical";
+    }
+
+    const alerts: Alert[] = [];
+
+    (episodes as Array<Record<string, unknown>>).forEach((ep, i) => {
+      const ci = ((ep.ci_out as number) || 0) / Q;
+      const ema = ((ep.ci_ema_out as number) || 0) / Q;
+      const al = (ep.al_out as number) || 0;
+
+      if (ci > ciThresh) {
+        alerts.push({
+          episode: i + 1,
+          type: "ci_exceeded",
+          value: `${(ci * 100).toFixed(1)}%`,
+          threshold: `${(ciThresh * 100).toFixed(1)}%`,
+          severity: ci > 0.70 ? "critical" : "warn",
+        });
+      }
+
+      if (ema > emaThresh) {
+        alerts.push({
+          episode: i + 1,
+          type: "ema_exceeded",
+          value: `${(ema * 100).toFixed(1)}%`,
+          threshold: `${(emaThresh * 100).toFixed(1)}%`,
+          severity: ema > 0.70 ? "critical" : "warn",
+        });
+      }
+
+      if (al >= alThresh) {
+        alerts.push({
+          episode: i + 1,
+          type: "authority_elevated",
+          value: `AL${al}`,
+          threshold: `AL${alThresh}`,
+          severity: al >= 4 ? "critical" : "warn",
+        });
+      }
+
+      if (ghostOn && ep.ghost_confirmed) {
+        alerts.push({
+          episode: i + 1,
+          type: "ghost_detected",
+          value: `streak ${ep.ghost_suspect_streak || 0}`,
+          threshold: "any",
+          severity: "critical",
+        });
+      }
+
+      if (faultOn && ep.fault) {
+        alerts.push({
+          episode: i + 1,
+          type: "fault",
+          value: `code ${ep.fault_code || 0}`,
+          threshold: "any",
+          severity: "critical",
+        });
+      }
+    });
+
+    const critCount = alerts.filter(a => a.severity === "critical").length;
+    const warnCount = alerts.filter(a => a.severity === "warn").length;
+
+    let status: "ok" | "warn" | "critical";
+    if (critCount > 0) status = "critical";
+    else if (warnCount > 0) status = "warn";
+    else status = "ok";
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              status,
+              total_alerts: alerts.length,
+              critical: critCount,
+              warnings: warnCount,
+              episodes_checked: episodes.length,
+              thresholds: {
+                ci: `${(ciThresh * 100).toFixed(0)}%`,
+                ema: `${(emaThresh * 100).toFixed(0)}%`,
+                al: `AL${alThresh}`,
+                ghost: ghostOn,
+                fault: faultOn,
+              },
+              alerts,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
 // ━━━━━━━━━ VISUALIZATION TOOL ━━━━━━━━━
 
 /** Generate self-contained HTML visualization matching Lab dashboard style */
@@ -1106,7 +1326,7 @@ async function main() {
   console.error("[ci1t-mcp] Server started — stdio transport");
   console.error(`[ci1t-mcp] Base URL: ${BASE_URL}`);
   console.error(`[ci1t-mcp] API key: ${API_KEY ? "configured" : "NOT SET"}`);
-  console.error(`[ci1t-mcp] 18 tools registered`);
+  console.error(`[ci1t-mcp] 20 tools registered`);
 
   if (!API_KEY) {
     console.error("");
