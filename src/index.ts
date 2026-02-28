@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * CI-1T MCP Server v1.5.0
+ * CI-1T MCP Server v1.6.1
  *
  * Model Context Protocol server for CI-1T — the prediction stability engine.
- * Exposes 20 tools across evaluation, fleet sessions, API key management, billing, monitoring, visualization, and utilities.
+ * Exposes 20 tools + 1 resource across evaluation, fleet sessions, API key management, billing, monitoring, visualization, and utilities.
  *
  * Auth:
  *   CI1T_API_KEY  — ci_... API key. Single credential for all authenticated tools.
@@ -21,6 +21,7 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { randomBytes } from "crypto";
 
 // ─── Config ───────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ function formatResult(result: ApiResult): { content: Array<{ type: "text"; text:
 
 const server = new McpServer({
   name: "ci1t",
-  version: "1.6.0",
+  version: "1.6.1",
 });
 
 // ─── Resources ────────────────────────────────────────────
@@ -277,12 +278,19 @@ function requireApiKey(): McpToolResult | null {
   };
 }
 
-/** Auto-convert: if all values are 0–1 floats, scale to Q0.16. Otherwise clamp to 0–65535. */
+/** Auto-convert: if all values are 0–1 floats with decimals, scale to Q0.16. Otherwise clamp to 0–65535. */
 function toQ16(scores: number[]): number[] {
-  const isFloat = scores.every((s) => s >= 0 && s <= 1);
+  const hasDecimals = scores.some((s) => s % 1 !== 0);
+  const allInUnit = scores.every((s) => s >= 0 && s <= 1);
+  const isFloat = hasDecimals && allInUnit;
   return isFloat
     ? scores.map((s) => Math.round(Math.max(0, Math.min(1, s)) * Q16))
     : scores.map((s) => Math.round(Math.max(0, Math.min(Q16, s))));
+}
+
+/** Escape HTML entities to prevent XSS in generated HTML */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // ━━━━━━━━━ ONBOARDING ━━━━━━━━━
@@ -384,7 +392,7 @@ server.tool(
   "evaluate",
   "Evaluate prediction stability. Sends scores to the CI-1T engine and returns per-episode stability metrics. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts. Response: { episodes: [{ ci_out, ci_ema_out, al_out, warn, fault, ghost_confirmed, ghost_suspect_streak, ... }], credits_used, credits_remaining }. CI values are Q0.16 (0–65535; divide by 65535 for %). Classification: ≤0.15=Stable, ≤0.45=Drift, ≤0.70=Flip, >0.70=Collapse. Chain results → visualize (chart), alert_check (threshold alerts), compare_windows (drift detection), or interpret_scores (stats).",
   {
-    scores: z.array(z.number().min(0).max(65535)).min(1).describe("Array of prediction scores — floats (0.0–1.0) or Q0.16 integers (0–65535), auto-detected"),
+    scores: z.array(z.number().min(0).max(65535)).min(1).max(10000).describe("Array of prediction scores — floats (0.0–1.0) or Q0.16 integers (0–65535), auto-detected. Max 10,000."),
     n: z.number().int().min(2).max(8).optional().describe("Episode length (default: 3)"),
   },
   async ({ scores, n }) => {
@@ -406,7 +414,7 @@ server.tool(
   "fleet_evaluate",
   "Evaluate a fleet of model nodes for prediction stability. Each node provides a score stream. Returns per-node episodes and aggregate fleet stats. Accepts floats (0.0–1.0) or Q0.16 integers (0–65535) — auto-converts per node. Response: { nodes: [{ node_id, episodes: [{ ci_out, ci_ema_out, al_out, warn, fault, ghost_confirmed, ... }] }], fleet_summary, credits_used, credits_remaining }. Chain per-node episodes → visualize, alert_check, or compare_windows. For persistent multi-round fleet monitoring, use fleet_session_create instead.",
   {
-    nodes: z.array(z.array(z.number().min(0).max(65535)).min(1)).min(1).describe("Array of node score arrays — each inner array is one node's scores (floats or Q0.16)"),
+    nodes: z.array(z.array(z.number().min(0).max(65535)).min(1).max(10000)).min(1).max(16).describe("Array of node score arrays — each inner array is one node's scores (floats or Q0.16). Max 16 nodes, 10,000 scores per node."),
     n: z.number().int().min(2).max(8).optional().describe("Episode length (default: 3)"),
   },
   async ({ nodes, n }) => {
@@ -489,7 +497,7 @@ server.tool(
   "Submit a scoring round to an existing fleet session. Each node's scores array is evaluated and the cumulative fleet snapshot is returned. Response: { round, nodes: [{ episodes: [...] }], fleet_summary }. Episodes in the response can be passed to visualize, alert_check, or compare_windows.",
   {
     session_id: z.string().describe("Fleet session ID"),
-    scores: z.array(z.array(z.number().int().min(0).max(65535)).min(1)).min(1).describe("Per-node score arrays for this round"),
+    scores: z.array(z.array(z.number().int().min(0).max(65535)).min(1).max(10000)).min(1).max(16).describe("Per-node score arrays for this round. Max 16 nodes, 10,000 scores per node."),
   },
   async ({ session_id, scores }) => {
     const guard = requireApiKey();
@@ -585,11 +593,12 @@ server.tool(
   async ({ user_id, name, scope }) => {
     const guard = requireApiKey();
     if (guard) return guard;
-    // Generate a random API key client-side
+    // Generate a random API key using cryptographic RNG
     const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const bytes = randomBytes(32);
     let raw = "ci_";
     for (let i = 0; i < 32; i++) {
-      raw += chars[Math.floor(Math.random() * chars.length)];
+      raw += chars[bytes[i] % chars.length];
     }
     const masked = raw.slice(0, 6) + "••••••";
 
@@ -856,7 +865,7 @@ server.tool(
 
     // Severity assessment
     const severityFactors: string[] = [];
-    if (ciDelta > 0.15) severityFactors.push("CI jumped significantly (+${(ciDelta * 100).toFixed(1)}%)");
+    if (ciDelta > 0.15) severityFactors.push(`CI jumped significantly (+${(ciDelta * 100).toFixed(1)}%)`);
     if (curr.ghosts > base.ghosts) severityFactors.push(`Ghost count increased (${base.ghosts} → ${curr.ghosts})`);
     if (curr.faults > base.faults) severityFactors.push(`Fault count increased (${base.faults} → ${curr.faults})`);
     if (curr.al_max > base.al_max) severityFactors.push(`Max authority level rose (AL${base.al_max} → AL${curr.al_max})`);
@@ -1023,7 +1032,7 @@ server.tool(
 function buildVisualizationHTML(episodes: Array<Record<string, unknown>>, title?: string): string {
   const Q = 65535;
   const eps = JSON.stringify(episodes);
-  const chartTitle = title || "CI-1T Stability Analysis";
+  const chartTitle = escapeHtml(title || "CI-1T Stability Analysis");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1428,6 +1437,19 @@ server.tool(
     // Write to temp file
     const tmpDir = path.join(os.tmpdir(), "ci1t-mcp");
     fs.mkdirSync(tmpDir, { recursive: true });
+
+    // Cleanup: remove viz files older than 1 hour
+    const ONE_HOUR = 60 * 60 * 1000;
+    const now = Date.now();
+    try {
+      for (const f of fs.readdirSync(tmpDir)) {
+        if (!f.startsWith("ci1t_viz_")) continue;
+        const fPath = path.join(tmpDir, f);
+        const stat = fs.statSync(fPath);
+        if (now - stat.mtimeMs > ONE_HOUR) fs.unlinkSync(fPath);
+      }
+    } catch { /* cleanup is best-effort */ }
+
     const filename = `ci1t_viz_${Date.now()}.html`;
     const filePath = path.join(tmpDir, filename);
     fs.writeFileSync(filePath, html, "utf-8");

@@ -1,6 +1,6 @@
 # CI-1T MCP Server
 
-**Version:** 1.6.0  
+**Version:** 1.6.1  
 **Last Updated:** February 27, 2026  
 **License:** Apache 2.0
 
@@ -183,6 +183,16 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 ```
 
 ## Changelog
+
+### v1.6.1 (2026-02-27)
+- **SEC-01** (Critical): API key generation now uses `crypto.randomBytes()` instead of `Math.random()`
+- **SEC-02** (High): Visualization title is HTML-escaped to prevent XSS
+- **SEC-03** (Medium): `toQ16()` decimal heuristic prevents integer arrays `[0, 1]` from being misclassified as floats
+- **SEC-04** (Medium): Score arrays capped at 10,000 per stream, 16 nodes max on fleet tools
+- **SEC-05** (Medium): Source maps disabled in production build
+- **SEC-06** (Low): Fixed template literal bug in `compare_windows` severity message
+- **SEC-07** (Low): Visualization temp files auto-cleaned after 1 hour
+- **SEC-08** (Low): Header version comment updated
 
 ### v1.6.0 (2026-02-27)
 - **AI Discoverability**: All 20 tool descriptions now include response schemas and chaining hints

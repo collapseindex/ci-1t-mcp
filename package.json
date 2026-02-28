@@ -1,6 +1,6 @@
 {
   "name": "@collapseindex/ci1t-mcp",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "MCP server for CI-1T — prediction stability engine",
   "type": "module",
   "main": "dist/index.js",
