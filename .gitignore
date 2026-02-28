@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tgz
 .env
+.vscode/mcp.json
 
 # Python artifacts (legacy)
 ci1t_mcp/

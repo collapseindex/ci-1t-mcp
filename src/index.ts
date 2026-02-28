@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * CI-1T MCP Server v1.3.0
+ * CI-1T MCP Server v1.4.0
  *
  * Model Context Protocol server for CI-1T — the prediction stability engine.
- * Exposes 17 tools across evaluation, fleet sessions, API key management, billing, and utilities.
+ * Exposes 18 tools across evaluation, fleet sessions, API key management, billing, visualization, and utilities.
  *
  * Auth:
  *   CI1T_API_KEY  — ci_... API key. Single credential for all authenticated tools.
@@ -18,6 +18,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 // ─── Config ───────────────────────────────────────────────
 
@@ -81,7 +84,7 @@ function formatResult(result: ApiResult): { content: Array<{ type: "text"; text:
 
 const server = new McpServer({
   name: "ci1t",
-  version: "1.3.0",
+  version: "1.4.0",
 });
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -660,6 +663,441 @@ server.tool(
   }
 );
 
+// ━━━━━━━━━ VISUALIZATION TOOL ━━━━━━━━━
+
+/** Generate self-contained HTML visualization matching Lab dashboard style */
+function buildVisualizationHTML(episodes: Array<Record<string, unknown>>, title?: string): string {
+  const Q = 65535;
+  const eps = JSON.stringify(episodes);
+  const chartTitle = title || "CI-1T Stability Analysis";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${chartTitle}</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', SFMono-Regular, ui-monospace, monospace;
+    --bg: #111; --surface: rgba(255,255,255,0.03); --border: rgba(255,255,255,0.08);
+    --text: #f5f5f5; --muted: #b0b0b0; --faint: #888; --accent: #fff;
+    --green: #4ade80; --amber: #fbbf24; --orange: #f97316; --red: #f87171;
+    --ghost: #a78bfa; --cyan: #0ea5e9;
+    --sidebar-w: 220px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+  }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    position: fixed; top: 0; left: 0; width: var(--sidebar-w); height: 100vh;
+    z-index: 30; display: flex; flex-direction: column; justify-content: space-between;
+    background: rgba(17,17,17,0.85); backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden;
+  }
+  .sidebar-top { flex: 1; overflow-y: auto; }
+  .sidebar-brand {
+    padding: 20px; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-brand a {
+    font-family: var(--font-mono); font-weight: 700; font-size: 18px;
+    color: var(--accent); text-decoration: none; letter-spacing: -0.5px;
+  }
+  .sidebar-section-label {
+    font-family: var(--font-mono); font-size: 10px; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 1px; padding: 14px 20px 6px;
+  }
+  .sidebar-divider { height: 1px; background: var(--border); margin: 10px 12px; }
+
+  /* Gauge cards in sidebar */
+  .gauges { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; }
+  .gauge {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px;
+  }
+  .gauge-label {
+    font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
+  }
+  .gauge-value {
+    font-family: var(--font-mono); font-size: 20px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1.2;
+  }
+  .gauge-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+  /* Legend in sidebar */
+  .legend { display: flex; flex-direction: column; gap: 4px; padding: 4px 20px 8px; }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--faint);
+  }
+  .legend-dot { width: 6px; height: 6px; border-radius: 1px; flex-shrink: 0; }
+
+  /* Stats in sidebar */
+  .stats { display: flex; flex-direction: column; gap: 3px; padding: 4px 12px 12px; }
+  .stat-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 8px; font-family: var(--font-mono); font-size: 11px; color: var(--faint);
+    border-radius: 4px;
+  }
+  .stat-row:hover { background: rgba(255,255,255,0.04); }
+  .stat-val { font-weight: 600; color: var(--text); }
+
+  /* Sidebar footer */
+  .sidebar-bottom {
+    padding: 12px 20px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .sidebar-bottom a {
+    color: var(--faint); text-decoration: none; font-size: 11px;
+    font-family: var(--font-mono); transition: color 0.15s;
+  }
+  .sidebar-bottom a:hover { color: var(--text); }
+
+  /* ─── Main content ─── */
+  main {
+    margin-left: var(--sidebar-w);
+    padding: clamp(20px, 3vw, 40px); padding-top: clamp(20px, 4vh, 36px);
+    max-width: calc(960px + var(--sidebar-w));
+    min-height: 100vh;
+  }
+  .header { margin-bottom: 20px; }
+  h1 { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .subtitle { font-size: 12px; color: var(--muted); }
+
+  /* Chart panels */
+  .charts { display: flex; flex-direction: column; gap: 14px; }
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .charts-row { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px;
+  }
+  .panel-label {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
+  }
+  .canvas-wrap { background: rgba(255,255,255,0.015); border-radius: 4px; overflow: hidden; }
+  canvas { width: 100%; display: block; cursor: crosshair; }
+  .ep-labels {
+    display: flex; justify-content: center; gap: 0; margin-top: 4px;
+    font-family: var(--font-mono); font-size: 10px; color: rgba(176,176,176,0.5);
+  }
+  .ep-labels span { text-align: center; }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity 150ms;
+    background: #1f1f1f; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    padding: 8px 12px; font-family: var(--font-mono); font-size: 12px;
+    color: var(--text); z-index: 100; white-space: nowrap;
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+  }
+  #tooltip.visible { opacity: 1; }
+  .tt-row { display: flex; justify-content: space-between; gap: 14px; margin: 1px 0; }
+  .tt-label { color: var(--muted); }
+  .tt-value { font-weight: 500; font-variant-numeric: tabular-nums; }
+  .tt-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-left: 4px;
+  }
+
+  /* ─── Mobile: sidebar collapses ─── */
+  @media (max-width: 768px) {
+    .sidebar { transform: translateX(-100%); transition: transform 0.25s; }
+    .sidebar.open { transform: translateX(0); }
+    main { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <div class="sidebar-brand"><a href="https://collapseindex.org" target="_blank">CI-1T</a></div>
+
+    <div class="sidebar-section-label">Metrics</div>
+    <div class="gauges" id="gauges"></div>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section-label">Legend</div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Stable \u2264 15%</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Drift \u2264 45%</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div>Flip \u2264 70%</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Collapse > 70%</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--ghost)"></div>Ghost</div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section-label">Summary</div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="sidebar-bottom">
+    <a href="https://collapseindex.org" target="_blank">collapseindex.org</a>
+  </div>
+</aside>
+
+<main>
+  <div class="header">
+    <h1>${chartTitle}</h1>
+    <div class="subtitle">${episodes.length} episode${episodes.length !== 1 ? "s" : ""} \u2022 CI-1T GRM v2</div>
+  </div>
+
+  <div class="charts">
+    <div class="panel">
+      <div class="panel-label">CI per Episode</div>
+      <div class="canvas-wrap"><canvas id="ciChart" height="140"></canvas></div>
+      <div class="ep-labels" id="ciLabels"></div>
+    </div>
+    <div class="charts-row">
+      <div class="panel">
+        <div class="panel-label">CI EMA Trend</div>
+        <div class="canvas-wrap"><canvas id="emaChart" height="120"></canvas></div>
+        <div class="ep-labels" id="emaLabels"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-label">Authority Level</div>
+        <div class="canvas-wrap"><canvas id="alChart" height="120"></canvas></div>
+        <div class="ep-labels" id="alLabels"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="tooltip"></div>
+
+<script>
+const Q16 = ${Q};
+const episodes = ${eps};
+const tooltip = document.getElementById('tooltip');
+
+function classifyCI(n) {
+  if (n <= 0.15) return { label: 'Stable',   color: '#4ade80', bg: 'rgba(74,222,128,0.15)' };
+  if (n <= 0.45) return { label: 'Drift',    color: '#fbbf24', bg: 'rgba(251,191,36,0.15)' };
+  if (n <= 0.70) return { label: 'Flip',     color: '#f97316', bg: 'rgba(249,115,22,0.15)' };
+  return              { label: 'Collapse', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
+}
+
+function alColor(al) {
+  return ['#4ade80','#0ea5e9','#fbbf24','#f97316','#f87171'][Math.min(al, 4)];
+}
+function alLabel(al) {
+  return ['Full trust','Caution','Reduced','Minimal','No authority'][Math.min(al, 4)];
+}
+
+// ─── Bar renderer — adaptive sizing ───
+function drawBars(canvasId, values, opts) {
+  const canvas = document.getElementById(canvasId);
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  const maxVal = opts.maxVal || Math.max(...values.map(v => v.val), 0.01);
+  const pad = 16;
+  const plotW = w - pad * 2;
+  const plotH = h - 4;
+
+  var n = values.length;
+  var gapRatio = 0.3;
+  var slotW = plotW / n;
+  var barW = Math.max(4, Math.min(48, slotW * (1 - gapRatio)));
+  var gap = slotW - barW;
+  var totalW = n * barW + (n - 1) * gap;
+  var offsetX = pad + (plotW - totalW) / 2;
+
+  // Episode labels
+  var labelsId = canvasId.replace('Chart', 'Labels');
+  var labelsEl = document.getElementById(labelsId);
+  if (labelsEl) {
+    labelsEl.innerHTML = values.map(function(_, i) {
+      return '<span style="width:' + (barW + gap) + 'px">E' + (i + 1) + '</span>';
+    }).join('');
+  }
+
+  var barMeta = [];
+  values.forEach(function(v, i) {
+    var x = offsetX + i * (barW + gap);
+    var barH = Math.max(4, (v.val / maxVal) * plotH);
+    var y = h - 2 - barH;
+    var r = Math.min(2, barW / 4);
+
+    var hex = v.color;
+    var cr = parseInt(hex.slice(1,3),16), cg = parseInt(hex.slice(3,5),16), cb = parseInt(hex.slice(5,7),16);
+    ctx.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',0.75)';
+
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, r);
+    ctx.fill();
+
+    barMeta.push({ x: x, y: y, w: barW, h: barH, idx: i });
+  });
+
+  // Threshold lines for CI chart
+  if (opts.thresholds) {
+    [{ val: 0.15, color: '#4ade80' }, { val: 0.45, color: '#fbbf24' }, { val: 0.70, color: '#f97316' }].forEach(t => {
+      if (t.val <= maxVal) {
+        var ty = h - 2 - (t.val / maxVal) * plotH;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = t.color + '40';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(pad, ty); ctx.lineTo(w - pad, ty); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    });
+  }
+
+  // Hover
+  canvas.addEventListener('mousemove', (e) => {
+    const cr = canvas.getBoundingClientRect();
+    const mx = e.clientX - cr.left;
+    const hit = barMeta.find(b => mx >= b.x - 1 && mx <= b.x + b.w + 1);
+    if (hit) {
+      const ep = episodes[hit.idx];
+      const ci = (ep.ci_out || 0) / Q16;
+      const cls = classifyCI(ci);
+      tooltip.innerHTML =
+        '<div style="font-weight:600;margin-bottom:4px;color:' + cls.color + '">' +
+          'Episode ' + (hit.idx + 1) +
+          '<span class="tt-badge" style="background:' + cls.bg + ';color:' + cls.color + '">' + cls.label + '</span>' +
+          (ep.ghost_confirmed ? '<span class="tt-badge" style="background:rgba(167,139,250,0.15);color:#a78bfa">Ghost</span>' : '') +
+          (ep.warn ? '<span class="tt-badge" style="background:rgba(251,191,36,0.15);color:#fbbf24">Warn</span>' : '') +
+          (ep.fault ? '<span class="tt-badge" style="background:rgba(248,113,113,0.15);color:#f87171">Fault</span>' : '') +
+        '</div>' +
+        '<div class="tt-row"><span class="tt-label">CI</span><span class="tt-value" style="color:' + cls.color + '">' + (ep.ci_out || 0) + ' / ${Q} (' + (ci * 100).toFixed(1) + '%)</span></div>' +
+        '<div class="tt-row"><span class="tt-label">EMA</span><span class="tt-value">' + (ep.ci_ema_out || 0) + '</span></div>' +
+        '<div class="tt-row"><span class="tt-label">Authority</span><span class="tt-value" style="color:' + alColor(ep.al_out || 0) + '">AL' + (ep.al_out || 0) + ' \u2014 ' + alLabel(ep.al_out || 0) + '</span></div>' +
+        (ep.ghost_suspect ? '<div class="tt-row"><span class="tt-label">Ghost</span><span class="tt-value" style="color:#a78bfa">Suspect (' + (ep.ghost_suspect_streak || 0) + ')</span></div>' : '');
+      tooltip.classList.add('visible');
+      tooltip.style.left = Math.min(e.clientX + 12, window.innerWidth - 240) + 'px';
+      tooltip.style.top = (e.clientY - 8) + 'px';
+    } else {
+      tooltip.classList.remove('visible');
+    }
+  });
+  canvas.addEventListener('mouseleave', function() { tooltip.classList.remove('visible'); });
+
+  return barMeta;
+}
+
+// ─── Render ───
+function render() {
+  const lastEp = episodes[episodes.length - 1];
+  const lastCI = (lastEp.ci_out || 0) / Q16;
+  const lastEMA = (lastEp.ci_ema_out || 0) / Q16;
+  const lastAL = lastEp.al_out || 0;
+  const ghostCount = episodes.filter(function(e) { return e.ghost_confirmed; }).length;
+  const cls = classifyCI(lastCI);
+
+  // Sidebar gauge cards
+  document.getElementById('gauges').innerHTML =
+    '<div class="gauge"><div class="gauge-label">Collapse Index</div>' +
+      '<div class="gauge-value" style="color:' + cls.color + '">' + (lastCI * 100).toFixed(1) + '%</div>' +
+      '<div class="gauge-sub">' + cls.label + '</div></div>' +
+    '<div class="gauge"><div class="gauge-label">EMA</div>' +
+      '<div class="gauge-value" style="color:#0ea5e9">' + (lastEMA * 100).toFixed(1) + '%</div>' +
+      '<div class="gauge-sub">Smoothed trend</div></div>' +
+    '<div class="gauge"><div class="gauge-label">Authority</div>' +
+      '<div class="gauge-value" style="color:' + alColor(lastAL) + '">AL' + lastAL + '</div>' +
+      '<div class="gauge-sub">' + alLabel(lastAL) + '</div></div>' +
+    '<div class="gauge"><div class="gauge-label">Ghost</div>' +
+      '<div class="gauge-value" style="color:' + (ghostCount ? '#a78bfa' : '#b0b0b0') + '">' + ghostCount + '</div>' +
+      '<div class="gauge-sub">' + (ghostCount ? 'Detected' : 'None') + '</div></div>';
+
+  // Charts
+  var ciVals = episodes.map(function(ep) {
+    var ci = (ep.ci_out || 0) / Q16;
+    var ghost = ep.ghost_confirmed || false;
+    var c = classifyCI(ci);
+    return { val: ci, color: ghost ? '#a78bfa' : c.color };
+  });
+  drawBars('ciChart', ciVals, { maxVal: 1, thresholds: true });
+
+  var emaVals = episodes.map(function(ep) {
+    return { val: (ep.ci_ema_out || 0) / Q16, color: '#0ea5e9' };
+  });
+  drawBars('emaChart', emaVals, { maxVal: 1 });
+
+  var alVals = episodes.map(function(ep) {
+    return { val: ep.al_out || 0, color: alColor(ep.al_out || 0) };
+  });
+  drawBars('alChart', alVals, { maxVal: 4 });
+
+  // Sidebar stats
+  var ciNorm = episodes.map(function(ep) { return (ep.ci_out || 0) / Q16; });
+  var mean = ciNorm.reduce(function(a, b) { return a + b; }, 0) / ciNorm.length;
+  var maxCI = Math.max.apply(null, ciNorm);
+  var minCI = Math.min.apply(null, ciNorm);
+  var warns = episodes.filter(function(e) { return e.warn; }).length;
+  var faults = episodes.filter(function(e) { return e.fault; }).length;
+  var mCls = classifyCI(mean);
+
+  document.getElementById('stats').innerHTML =
+    '<div class="stat-row"><span>Episodes</span><span class="stat-val">' + episodes.length + '</span></div>' +
+    '<div class="stat-row"><span>Mean CI</span><span class="stat-val" style="color:' + mCls.color + '">' + (mean * 100).toFixed(1) + '%</span></div>' +
+    '<div class="stat-row"><span>Range</span><span class="stat-val">' + (minCI * 100).toFixed(1) + ' \u2013 ' + (maxCI * 100).toFixed(1) + '%</span></div>' +
+    '<div class="stat-row"><span>Verdict</span><span class="stat-val" style="color:' + mCls.color + '">' + mCls.label + '</span></div>' +
+    (warns ? '<div class="stat-row"><span>Warns</span><span class="stat-val" style="color:#fbbf24">' + warns + '</span></div>' : '') +
+    (faults ? '<div class="stat-row"><span>Faults</span><span class="stat-val" style="color:#f87171">' + faults + '</span></div>' : '') +
+    (ghostCount ? '<div class="stat-row"><span>Ghosts</span><span class="stat-val" style="color:#a78bfa">' + ghostCount + '</span></div>' : '');
+}
+
+window.addEventListener('resize', render);
+render();
+</script>
+</body>
+</html>`;
+}
+
+server.tool(
+  "visualize",
+  "Generate an interactive HTML visualization of CI-1T evaluate results. Returns a file path to a self-contained HTML chart with color-coded CI bars, EMA trend, authority levels, hover tooltips, and summary stats — same style as the CI-1T dashboard Lab. Open the returned file in a browser to view.",
+  {
+    episodes: z.array(z.record(z.string(), z.unknown())).min(1).describe("Episode array from an evaluate or fleet_evaluate response"),
+    title: z.string().optional().describe("Chart title (default: CI-1T Stability Analysis)"),
+  },
+  async ({ episodes, title }) => {
+    const html = buildVisualizationHTML(episodes as Array<Record<string, unknown>>, title);
+
+    // Write to temp file
+    const tmpDir = path.join(os.tmpdir(), "ci1t-mcp");
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const filename = `ci1t_viz_${Date.now()}.html`;
+    const filePath = path.join(tmpDir, filename);
+    fs.writeFileSync(filePath, html, "utf-8");
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              visualization: filePath,
+              episodes: episodes.length,
+              title: title || "CI-1T Stability Analysis",
+              instruction: "Open this HTML file in a browser or VS Code Simple Browser to view the interactive chart.",
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
 // ─── Start ────────────────────────────────────────────────
 
 async function main() {
@@ -668,7 +1106,7 @@ async function main() {
   console.error("[ci1t-mcp] Server started — stdio transport");
   console.error(`[ci1t-mcp] Base URL: ${BASE_URL}`);
   console.error(`[ci1t-mcp] API key: ${API_KEY ? "configured" : "NOT SET"}`);
-  console.error(`[ci1t-mcp] 17 tools registered`);
+  console.error(`[ci1t-mcp] 18 tools registered`);
 
   if (!API_KEY) {
     console.error("");

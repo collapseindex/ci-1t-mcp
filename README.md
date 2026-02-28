@@ -1,6 +1,6 @@
 # CI-1T MCP Server
 
-**Version:** 1.3.0  
+**Version:** 1.4.0  
 **Last Updated:** February 27, 2026  
 **License:** Apache 2.0
 
@@ -8,7 +8,7 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 
 **One credential. One env var. That's it.**
 
-## Tools (17)
+## Tools (18)
 
 | Tool | Description | Auth |
 |------|-------------|------|
@@ -29,6 +29,7 @@ MCP (Model Context Protocol) server for the CI-1T prediction stability engine. L
 | `interpret_scores` | Statistical breakdown of scores | None |
 | `convert_scores` | Convert between floats and Q0.16 | None |
 | `generate_config` | Integration boilerplate for any framework | None |
+| `visualize` | Interactive HTML visualization of evaluate results | None |
 
 ## Onboarding
 
@@ -176,6 +177,14 @@ Classification labels (Stable / Drift / Flip / Collapse) are determined by the e
 ```
 
 ## Changelog
+
+### v1.4.0 (2026-02-27)
+- `visualize` tool: generates self-contained interactive HTML with Canvas 2D bar charts
+- Fixed sidebar layout matching CI-1T Lab dashboard style (KPIs, legend, stats in sidebar)
+- EMA Trend + Authority Level charts side-by-side
+- Adaptive bar sizing, hover tooltips, color-coded classifications
+- Links to collapseindex.org in sidebar
+- 18 tools total
 
 ### v1.3.0 (2026-02-27)
 - **Single credential**: All tools now use `CI1T_API_KEY` — no Bearer token needed
